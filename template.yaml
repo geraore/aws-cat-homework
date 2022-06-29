@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: Sourcing - Linked in as email source process
+
+Metadata:
+  Authors:
+    - Gerardo Orellana (gerar.ore@gmail.com)
+
+Parameters:
+  SSMDataEnrichmentIMDBApiKey:
+      Description: 'Api key for IMDB access'
+      Type: String
+      Default: CAT_SSM_IMDB_ApiKey
+  KmsArn:
+      Description: 'Decryption key for ssm parameter'
+      Type: String
+      Default: arn:aws:kms:us-east-1:011646831753:key/c5db03d3-82d0-4241-8bea-adbb371d2c5f
+  RegionName:
+      Description: 'Region Name'
+      Type: String
+      Default: eu-central-1
+
+
+Resources:
+
+  SqsMoviesQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: 'cat-movies-sqs'
+      VisibilityTimeout: 300
+
+  SnsMoviesTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: 'cat-movies-sns'
+
+  SnsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt SqsMoviesQueue.Arn
+      Protocol: sqs
+      TopicArn: !Ref SnsMoviesTopic
+      RawMessageDelivery: True
+
+  SnsToQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref SqsMoviesQueue
+      PolicyDocument:
+        Statement:
+          - Action:
+              - "SQS:SendMessage"
+              - "SQS:ReceiveMessage"
+            Effect: "Allow"
+            Resource: "*"
+            Principal:
+              AWS:
+                - "*"
+
+  DataIngestionLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: cat-data-ingestion
+      Environment:
+        Variables:
+          SNS_ARN_MOVIE_TOPIC: !Ref SnsMoviesTopic
+          S3_SOURCE_BUCKET_CAT: top-movies
+          AWS_CAT_PROJECT_REGION_NAME: !Ref RegionName
+      CodeUri: code/
+      Handler: src.app.data_ingestion.data_ingestion_lambda_handler
+      Runtime: python3.8
+      Timeout: 300
+      MemorySize: 128
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+          - Effect: "Allow"
+            Action:
+              - "ec2:AWSLambdaVPCAccessExecutionRole"
+              - "SNS:Publish"
+              - "s3:GetObject"
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 'kms:Decrypt'
+            Resource: !Ref KmsArn
+      Events:
+        EventBridgeCatDailyIngestion:
+          Type: Schedule
+          Properties:
+            Name: EventBridgeCatDailyIngestion
+            Description: Cat daily ingestion
+            Enabled: true
+            Schedule: cron(0 12 ? * * *)
+
+  DataEnrichmentLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: cat-data-enrichment
+      Environment:
+        Variables:
+          SSM_DATA_ENRICHMENT_IMDB_API_KEY: !Ref SSMDataEnrichmentIMDBApiKey
+          S3_DESTINATION_BUCKET_CAT: my-special-internal-bucket
+          AWS_CAT_PROJECT_REGION_NAME: !Ref RegionName
+      CodeUri: code/
+      Handler: src.app.data_enrichment.data_enrichment_lambda_handler
+      Runtime: python3.8
+      Timeout: 300
+      MemorySize: 128
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+          - Effect: "Allow"
+            Action:
+              - "ec2:AWSLambdaVPCAccessExecutionRole"
+              - "SNS:Publish"
+              - "s3:PutObject"
+              - "ssm:GetParameter*"
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 'kms:Decrypt'
+            Resource: !Ref KmsArn
+      Events:
+        SqsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SqsMoviesQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds:  10
