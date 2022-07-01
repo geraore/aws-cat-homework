@@ -1,7 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: 'AWS::Serverless-2016-10-31'
-Description: Sourcing - Linked in as email source process
-
+Description: Event Driven Showcase project
 Metadata:
   Authors:
     - Gerardo Orellana (gerar.ore@gmail.com)
