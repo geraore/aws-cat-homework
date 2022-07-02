@@ -15,6 +15,7 @@ The AWS services that will be used for this little showcase are the following:
 * Lambda
 * CloudFormation
 * SSM secure parameters
+* Event Bridge Rule for triggering one of the lambdas daily
 
 
 You need to install the following dependencies
